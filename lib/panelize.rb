@@ -75,8 +75,38 @@ module Panelize
       im_crop
     end
 
+    def get_selected_plane(im, params)
+      sizes = ImageCoordinate.cloneCoord(im.getDimensionSizes)
+      sizes[:z] = 1
+      plane_coord = ImageCoordinate[0,0,0,0,0]
+      plane_coord[:z] = params[:selectplane]
+      im_single_plane = im.subImage(sizes, plane_coord).getWritableInstance
+      params[:aberr_corr].each_with_index do |c, i|
+        next if c==0
+        plane_coord[:z] = params[:selectplane] + c
+        other_plane = im.subImage(sizes, plane_coord)
+        lower = ImageCoordinate[0,0,0,0,0]
+        upper = ImageCoordinate.cloneCoord(sizes)
+        lower[:c] = params[:col_chs][i]
+        upper[:c] = lower[:c] + 1
+        other_plane.setBoxOfInterest(lower, upper)
+        im_single_plane.setBoxOfInterest(lower, upper)
+        im_single_plane.each do |ic|
+          im_single_plane[ic] = other_plane[ic]
+        end
+        other_plane.clearBoxOfInterest
+        im_single_plane.clearBoxOfInterest
+        lower.recycle
+        upper.recycle
+      end
+      sizes.recycle
+      plane_coord.recycle
+      im_single_plane
+    end
+
     def load_and_crop(fn, params)
       im = RImageAnalysisTools.get_image(fn)
+      im = get_selected_plane(im, params) if params[:selectplane]
       ul = display(im, params)
       crop(im, ul, params)
     end
@@ -210,7 +240,10 @@ module Panelize
     def ask_for_params(params)
       params[:n_rows] = ask("Enter the number of treatments (rows) to panelize: ", Integer)
       params[:col_chs] = ask("Enter the channel numbers to display (comma-separated): ", lambda { |str| str.split(/,\s*/).map(&:to_i) })
-      params[:col_order] = ask ("Enter the channel order (comma-separated) (default r,g,b if no order given): "), lambda { |str| str.empty? ? [:r, :g, :b] : str.split(/,\s*/).map(&:to_sym) }
+      params[:col_order] = ask("Enter the channel order (comma-separated) (default r,g,b if no order given): ", lambda { |str| str.empty? ? [:r, :g, :b] : str.split(/,\s*/).map(&:to_sym) })
+      if params[:selectplane] then
+        params[:aberr_corr] = ask("Enter a chromatic aberration correction in integer number of planes for each channel (comma-separated; default: no correction):  ", lambda { |str| str.empty? ? params[:col_chs].map { 0 } : str.split(/,\s*/).map(&:to_i)})
+      end
       params[:fns] = []
       params[:n_rows].times do |i|
         params[:fns] << ask("Enter the filename for treatment #{i+1}: ").gsub("'", "") #remove quotes if drag and drop fn insertion in the terminal puts them in
@@ -226,6 +259,7 @@ module Panelize
         opt :scalebar, "Size of the scalebar in microns", type: :float, default: 5.0
         opt :scalesat, "Amount in percent by which to saturate images", type: :float, default: 15.0
         opt :scaleundersat, "Amount in percent by which to undersaturate images", type: :float, default: 5.0
+        opt :selectplane, "Select a single plane of a multiple z-section image by its index", type: :integer, default: nil
       end
 
       ask_for_params(params)
